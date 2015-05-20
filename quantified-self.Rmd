@@ -34,7 +34,7 @@ training_orig <- read.csv('pml-training.csv.gz')
 testing_final <- read.csv('pml-testing.csv.gz')
 ```
 
-Initially we have `r nrow(training_orig)` observations for training and `r nrow(testing_final)` for final testing. Both datasets have `r ncol(training)` variables (columns). Let's split the training data into two more sets. Firstly the actual training dataset and secondly the testing set to be used to select the best model.
+Initially we have `r nrow(training_orig)` observations for training and `r nrow(testing_final)` for final testing. Both datasets have `r ncol(training_orig)` variables (columns). Let's split the training data into two more sets. Firstly the actual training dataset and secondly the testing set to be used to select the best model.
 
 ```{r split_data, cache = TRUE}
 set.seed(3456)
@@ -95,11 +95,39 @@ corrDescr <- findCorrelation(cor_training, cutoff = 0.75)
 training_no_na_nzv_cor <- training_no_na_nzv[, -corrDescr]
 ```
 
-After removing those `r length(corrDescr)` columns we are left with `r ncol(training_no_na_nzv_cor)`.
+After removing those `r length(corrDescr)` columns we are left with `r ncol(training_no_na_nzv_cor)`. These are:  
+`r sort(names(training_no_na_nzv_cor))`
+
+We can see that there are two timestamp variables. Let's remove them since they are irrelevant.
+
+```{r explor_timestamps}
+training_no_na_nzv_cor <- training_no_na_nzv_cor[, !(names(training_no_na_nzv_cor) %in% c('raw_timestamp_part_1', 'raw_timestamp_part_2'))]
+```
+
+The final dataset before we start training has `r ncol(training_no_na_nzv_cor)` columns. These are:  
+`r sort(names(training_no_na_nzv_cor))`
 
 ## Training
 
 To train the classifier we can use the following methods:
+
+```{r echo=FALSE}
+# Windows
+
+# library(doSNOW)
+# cl <- makeCluster(4, type = 'SOCK')
+# clusterEvalQ(cl, library(foreach))
+# registerDoSNOW(cl)
+
+# library(doParallel)
+# cl <- makePSOCKcluster(2)
+# clusterEvalQ(cl, library(foreach))
+# registerDoParallel(cl)
+
+# Linux
+library(doMC)
+registerDoMC(2)
+```
 
 1. Regression Trees (rpart)
 
@@ -114,7 +142,12 @@ print(m_no_na_nzv_cor_rpart)
 2. Random Forest (rf). Though random forests are prone to overfitting, the train function will perform cross validation automatically so we don't need to worry about it. 
 
 ```{r training_rf, cache=TRUE}
-m_no_na_nzv_cor_rf <- train(classe ~ ., data = training_no_na_nzv_cor, method='rf', prox=TRUE)
+trControl <- trainControl(method="cv", number=5)
+
+# m_no_na_nzv_cor_rf <- train(classe ~ ., data = training_no_na_nzv_cor, method='rf', prox=TRUE, trControl = trControl, model = FALSE)
+
+rfParam <- expand.grid(mtry = 2)
+m_no_na_nzv_cor_rf <- train(classe ~ ., data = training_no_na_nzv_cor, method='parRF', prox=TRUE, tuneGrid = rfParam, trControl = trControl)
 print(m_no_na_nzv_cor_rf)
 ```
 
@@ -125,11 +158,15 @@ m_no_na_nzv_cor_gbm <- train(classe ~ ., data = training_no_na_nzv_cor, method='
 print(m_no_na_nzv_cor_gbm)
 ```
 
+```{r echo=FALSE}
+#stopCluster(cl)
+```
+
 Now let's compare all models. Firstly we can use the resamples function:
 
 ```{r training_comparison}
-resamps <- resamples(list(RPART = m_no_na_nzv_cor_rpart, RPART_PRE = m_no_na_nzv_cor_rpart_pre, RF = m_no_na_nzv_cor_rf, GBM = m_no_na_nzv_cor_gbm))
-summary(resamps)
+# resamps <- resamples(list(RPART = m_no_na_nzv_cor_rpart, RF = m_no_na_nzv_cor_rf, GBM = m_no_na_nzv_cor_gbm))
+# summary(resamps)
 ```
 
 We can see that the random forest method is more accurate.
