@@ -1,0 +1,1 @@
+To visit the github pages site for this project go to [http://prontog.github.io/PracticalML_Project/quantified-self.html](http://prontog.github.io/PracticalML_Project/quantified-self.html)

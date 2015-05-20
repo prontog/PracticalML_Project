@@ -1,24 +1,21 @@
 ---
-title: "Quantified Self Predictions"
+title: "Quantified-Self Predictions"
 author: "Panos Rontogiannis"
 date: "`r Sys.Date()`"
-output: html_document
+output: 
+    html_document:
+        keep_md: true
 ---
 
-## Background
+## Introduction
 
-Using devices such as Jawbone Up, Nike FuelBand, and Fitbit it is now possible to collect a large amount of data about personal activity relatively inexpensively. These type of devices are part of the quantified self movement – a group of enthusiasts who take measurements about themselves regularly to improve their health, to find patterns in their behavior, or because they are tech geeks. One thing that people regularly do is quantify how much of a particular activity they do, but they rarely quantify how well they do it. In this project, your goal will be to use data from accelerometers on the belt, forearm, arm, and dumbell of 6 participants. They were asked to perform barbell lifts correctly and incorrectly in 5 different ways.
+> Using devices such as Jawbone Up, Nike FuelBand, and Fitbit it is now possible to collect a large amount of data about personal activity relatively inexpensively. These type of devices are part of the quantified self movement a group of enthusiasts who take measurements about themselves regularly to improve their health, to find patterns in their behavior, or because they are tech geeks. One thing that people regularly do is quantify how much of a particular activity they do, but they rarely quantify how well they do it. 
 
-## What you should submit
+The data for this project comes from accelerometers on the belt, forearm, arm, and dumbell of 6 participants. The participants were asked to perform barbell lifts correctly and incorrectly in 5 different ways.
 
-The goal of your project is to predict the manner in which they did the exercise. This is the "classe" variable in the training set. You may use any of the other variables to predict with. You should create a report describing how you built your model, how you used cross validation, what you think the expected out of sample error is, and why you made the choices you did. You will also use your prediction model to predict 20 different test cases. 
+The goal of the project is to predict the manner in which the participants did the exercise. This is the **classe** variable in the training set. We will try to use some of the remaining variables to predict *classe* using the `caret` R package. 
 
-1. Your submission should consist of a link to a Github repo with your R markdown and compiled HTML file describing your analysis. Please constrain the text of the writeup to < 2000 words and the number of figures to be less than 5. It will make it easier for the graders if you submit a repo with a gh-pages branch so the HTML page can be viewed online (and you always want to make it easy on graders :-).
-2. You should also apply your machine learning algorithm to the 20 test cases available in the test data above. Please submit your predictions in appropriate format to the programming assignment for automated grading. See the programming assignment for additional details. 
-
-
-
-```{r global_options, message=FALSE}
+```{r global_options, message=FALSE, echo=FALSE}
 knitr::opts_chunk$set(fig.width=12, fig.height=8, fig.path='Figs/', warning=FALSE, message=FALSE)
 
 library(caret)
@@ -26,15 +23,16 @@ library(caret)
 
 ## The Data
 
-> Using devices such as Jawbone Up, Nike FuelBand, and Fitbit it is now possible to collect a large amount of data about personal activity relatively inexpensively. These type of devices are part of the quantified self movement – a group of enthusiasts who take measurements about themselves regularly to improve their health, to find patterns in their behavior, or because they are tech geeks. One thing that people regularly do is quantify how much of a particular activity they do, but they rarely quantify how well they do it. In this project, your goal will be to use data from accelerometers on the belt, forearm, arm, and dumbell of 6 participants. They were asked to perform barbell lifts correctly and incorrectly in 5 different ways.
-
+The data is loaded from two different zipped files 'pml-training.csv.gz' and 'pml-testing.csv.gz' containing the training and testing observations respectively.
 
 ```{r load_data, cache = TRUE}
 training_orig <- read.csv('pml-training.csv.gz')
 testing_final <- read.csv('pml-testing.csv.gz')
 ```
 
-Initially we have `r nrow(training_orig)` observations for training and `r nrow(testing_final)` for final testing. Both datasets have `r ncol(training_orig)` variables (columns). Let's split the training data into two more sets. Firstly the actual training dataset and secondly the testing set to be used to select the best model.
+Initially we have `r nrow(training_orig)` observations for training and `r nrow(testing_final)` for final testing by the project evaluators. Note that this dataset does not contain the `classe` variable. For this reason we will only use this dataset at the end to create the files for the project submission. 
+
+The training dataset has `r ncol(training_orig)` variables (columns) including the response variable (`classe`). Let's split it into two more sets. Firstly the actual training dataset and secondly the testing set to be used to select the best model. This way we will be able to measure the out of sample error.
 
 ```{r split_data, cache = TRUE}
 set.seed(3456)
@@ -47,7 +45,12 @@ So now we have `r nrow(training)` observations for training our models and `r nr
 
 ## Exploratory Analysis
 
-Let's explore the training and testing datasets. Let's start by looking for missing values.
+Let's explore the training dataset. First let's have a look at the response variable. It is a factor variable with 5 levels (`r levels(training$classe)`). As can be seen from the frequency table of the types of variable, most of the are numerical:
+```{r variable_types_pre}
+table(sapply(colnames(training), FUN = function(n) class(training[, n])))
+```
+
+Let's continue by looking for missing values.
 
 ```{r explor_missing_values_pt1}
 complete_training <- complete.cases(training)
@@ -57,17 +60,16 @@ From the training data we can see that `r sum(complete_training)` out of `r nrow
 
 ```{r explor_missing_values_pt2}
 # Count missing values per column.
-na_count <- colSums(is.na(training))
-names(na_count) <- names(training)
-na_count <- na_count[na_count > 0]
+missing_values <- data.frame(col_name = names(training), na_count = colSums(is.na(training)), row.names = NULL)
+missing_values <- subset(missing_values, na_count > 0)
 
-print(data.frame(na_count))
+qplot(missing_values$na_count, xlab = '# of NA', ylab = '# of variables', main = 'Exploring missing values', binwidth = 1)
 
 # Remove columns with missing values.
-training_no_na <- training[, !(names(training) %in% names(na_count))]
+training_no_na <- training[, !(names(training) %in% missing_values$col_name)]
 ```
 
-After removing those `r length(na_count)` columns we are left with `r ncol(training_no_na)`.
+After removing those `r nrow(missing_values)` columns we are left with `r ncol(training_no_na)`.
 
 Next let's see if there are any variables with near zero variance.
 
@@ -79,7 +81,7 @@ training_no_na_nzv <- training_no_na[, -nzv]
 
 After removing those `r length(nzv)` columns we are left with `r ncol(training_no_na_nzv)`.
 
-Now let's look for high correlations between the remainder varables.
+Now let's look for high correlations between the remainder variables.
 
 ```{r explor_correlations}
 # Need to remove factor variables first for the cor function to work.
@@ -95,93 +97,131 @@ corrDescr <- findCorrelation(cor_training, cutoff = 0.75)
 training_no_na_nzv_cor <- training_no_na_nzv[, -corrDescr]
 ```
 
-After removing those `r length(corrDescr)` columns we are left with `r ncol(training_no_na_nzv_cor)`. These are:  
-`r sort(names(training_no_na_nzv_cor))`
+After removing those `r length(corrDescr)` columns we are left with `r ncol(training_no_na_nzv_cor)`. These are: *`r sort(names(training_no_na_nzv_cor))`*.
 
-We can see that there are two timestamp variables. Let's remove them since they are irrelevant.
+We can see that there are two time-stamp variables as well as a factor variable called *user_name*. Let's remove them since they are irrelevant.
 
 ```{r explor_timestamps}
-training_no_na_nzv_cor <- training_no_na_nzv_cor[, !(names(training_no_na_nzv_cor) %in% c('raw_timestamp_part_1', 'raw_timestamp_part_2'))]
+training_no_na_nzv_cor <- training_no_na_nzv_cor[, !(names(training_no_na_nzv_cor) %in% c('raw_timestamp_part_1', 'raw_timestamp_part_2', 'user_name'))]
 ```
 
-The final dataset before we start training has `r ncol(training_no_na_nzv_cor)` columns. These are:  
-`r sort(names(training_no_na_nzv_cor))`
+The final dataset before we start training has `r ncol(training_no_na_nzv_cor)` columns (including the response variables). These are *`r sort(names(training_no_na_nzv_cor))`*.
+
+After all this pre-processing, the frequency table of variable types has become:
+```{r variable_types_post}
+table(sapply(colnames(training_no_na_nzv_cor), FUN = function(n) class(training_no_na_nzv_cor[, n])))
+```
 
 ## Training
 
-To train the classifier we can use the following methods:
-
 ```{r echo=FALSE}
-# Windows
-
-# library(doSNOW)
-# cl <- makeCluster(4, type = 'SOCK')
-# clusterEvalQ(cl, library(foreach))
-# registerDoSNOW(cl)
-
-# library(doParallel)
-# cl <- makePSOCKcluster(2)
-# clusterEvalQ(cl, library(foreach))
-# registerDoParallel(cl)
-
-# Linux
+# Prepare for training in parallel (works in Linux).
 library(doMC)
 registerDoMC(2)
 ```
 
-1. Regression Trees (rpart)
+Because `classe` is a *factor* variable we will need to train a classifier and since it has more than two levels, we cannot use *Generalized Linear Models* (glm). Instead we have to use more advanced classifiers. More specifically *regression trees (CART)*, *random forest* and *stochastic gradient boosting*. All classifiers will be trained using *5-fold Cross Validation* to reduce model overfitting and to estimate the out of sample error during training. We expect this estimate to be close to the final out of sample error that we will calculate later on using the test dataset. Our metric will be *accuracy*.
 
-```{r training_rpart, cache=TRUE}
-m_no_na_nzv_cor_rpart <- train(classe ~ ., data = training_no_na_nzv_cor, method='rpart')
-print(m_no_na_nzv_cor_rpart)
-
-#m_no_na_nzv_cor_rpart_pre <- train(classe ~ ., data = training_no_na_nzv_cor, method='rpart', preProcess = c('center', 'scale'))
-#print(m_no_na_nzv_cor_rpart_pre)
+```{r train_control}
+trControl <- trainControl(method="cv", number=5)
 ```
 
-2. Random Forest (rf). Though random forests are prone to overfitting, the train function will perform cross validation automatically so we don't need to worry about it. 
+Let's train the classifiers:
+
+### 1. Regression Trees (rpart)
+
+```{r training_rpart, cache=TRUE}
+m_no_na_nzv_cor_rpart <- train(classe ~ ., data = training_no_na_nzv_cor, method='rpart', trControl = trControl)
+print(m_no_na_nzv_cor_rpart)
+```
+
+### 2. Random Forest (rf). 
 
 ```{r training_rf, cache=TRUE}
-trControl <- trainControl(method="cv", number=5)
-
-# m_no_na_nzv_cor_rf <- train(classe ~ ., data = training_no_na_nzv_cor, method='rf', prox=TRUE, trControl = trControl, model = FALSE)
-
 rfParam <- expand.grid(mtry = 2)
 m_no_na_nzv_cor_rf <- train(classe ~ ., data = training_no_na_nzv_cor, method='parRF', prox=TRUE, tuneGrid = rfParam, trControl = trControl)
 print(m_no_na_nzv_cor_rf)
 ```
 
-3. Stochastic Gradient Boosting (gbm)
+### 3. Stochastic Gradient Boosting (gbm)
 
 ```{r training_gbm, cache=TRUE}
-m_no_na_nzv_cor_gbm <- train(classe ~ ., data = training_no_na_nzv_cor, method='gbm', verbose=FALSE)
+m_no_na_nzv_cor_gbm <- train(classe ~ ., data = training_no_na_nzv_cor, method='gbm', verbose=FALSE, trControl = trControl)
 print(m_no_na_nzv_cor_gbm)
 ```
 
-```{r echo=FALSE}
-#stopCluster(cl)
+Now let's compare all models using the resamples function:
+
+```{r training_comparison, cache=TRUE}
+resamps <- resamples(list(RPART = m_no_na_nzv_cor_rpart, RF = m_no_na_nzv_cor_rf, GBM = m_no_na_nzv_cor_gbm))
+summary(resamps)
 ```
 
-Now let's compare all models. Firstly we can use the resamples function:
-
-```{r training_comparison}
-# resamps <- resamples(list(RPART = m_no_na_nzv_cor_rpart, RF = m_no_na_nzv_cor_rf, GBM = m_no_na_nzv_cor_gbm))
-# summary(resamps)
-```
-
-We can see that the random forest method is more accurate.
-
-Finally let's use the testing dataset (taken from the original trianing set) to see how the three models perform compared to the actual classes.
-
-```{r training_comparison_pt2}
-
-```
+We can see that the random forest and boosting methods are significantly more accurate than CART.
 
 ## Results
 
+Let's use the testing dataset (taken from the original training set) to see how the three models perform compared to the actual values of the response variable *classe*:
+
+### 1. Regression Trees (rpart)
+```{r results_rpart}
+pred_rpart <- predict(m_no_na_nzv_cor_rpart, testing)
+cm_rpart <- confusionMatrix(pred_rpart, testing$classe)
+cm_rpart
+```
+
+We can see that the out of sample error measured by accuracy is `r cm_rpart$overall[1]`. During training, this was estimated to be `r m_no_na_nzv_cor_rpart$results$Accuracy[1]`. From the table it is obvious that classes 'C' and 'D' are all mistakenly predicted to be class 'E'.
+
+### 2. Random Forest (rf)
+```{r results_rf}
+pred_rf <- predict(m_no_na_nzv_cor_rf, testing)
+cm_rf <- confusionMatrix(pred_rf, testing$classe)
+cm_rf
+```
+
+In this case accuracy is `r cm_rf$overall[1]`. During training, this was estimated to be `r m_no_na_nzv_cor_rf$results$Accuracy[1]`. From the table we see that almost all observations were correctly predicted. The only erros are in predictions for classes 'C' and 'C'. Overall this classifier performed really well.
+
+### 3. Stochastic Gradient Boosting (gbm)
+```{r results_gbm}
+pred_gbm <- predict(m_no_na_nzv_cor_gbm, testing)
+cm_gbm <- confusionMatrix(pred_gbm, testing$classe)
+cm_gbm
+```
+
+The accuracy of this model against the testing data is `r cm_gbm$overall[1]`. During training, this was estimated to be `r m_no_na_nzv_cor_gbm$results$Accuracy[1]`. From the table we see that almost all observations were correctly predicted. The only missclassification was for class 'B'. Simillarly with the *random forest* classifier, boosting trained a classifier that performed exceptionally.
+
+For the submission part of the project I chose to use the *random forest* classifier due to the slightly-slightly higher accuracy. Also for some reason both the *CART* and *boosting* classifiers classified all 20 observations as classe 'A'. The *random forest* classifier produced the correct results.
+
+If it wasn't for this, we would have tried to combine (stack) these two classifiers to see if we can create an even more accurate one.
 
 ## References
 
 The data for this project come from this [source](http://groupware.les.inf.puc-rio.br/har) (see the section on the Weight Lifting Exercise Dataset).
 
 Velloso, E.; Bulling, A.; Gellersen, H.; Ugulino, W.; Fuks, H. [Qualitative Activity Recognition of Weight Lifting Exercises](http://groupware.les.inf.puc-rio.br/work.jsf?p1=11201). Proceedings of 4th International Conference in Cooperation with SIGCHI (Augmented Human '13) . Stuttgart, Germany: ACM SIGCHI, 2013. 
+
+## Appendix
+
+To train in parallel the `doMC` package was used with 2 workers. The total time (in seconds) needed to train each method is:  
+1. Regression Trees: `r m_no_na_nzv_cor_rpart$times$everything[3]`  
+2. Random Forest: `r m_no_na_nzv_cor_rf$times$everything[3]`  
+3. Stochastic Gradient Boosting: `r m_no_na_nzv_cor_gbm$times$everything[3]`  
+
+Session Info:  
+```{r echo=FALSE} 
+sessionInfo()
+```
+
+For the project submission, the following code was used to create the separate files for each of the 20 test observations:
+```{r submission}
+pml_write_files = function(x){
+    n = length(x)
+    for(i in 1:n){
+        filename = paste0("problem_id_",i,".txt")
+        write.table(x[i],file=filename,quote=FALSE,row.names=FALSE,col.names=FALSE)
+    }
+}
+
+final_pred <- predict(m_no_na_nzv_cor_rf, testing_final)
+# pml_write_files(final_pred)
+```
