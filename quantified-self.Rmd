@@ -99,10 +99,10 @@ training_no_na_nzv_cor <- training_no_na_nzv[, -corrDescr]
 
 After removing those `r length(corrDescr)` columns we are left with `r ncol(training_no_na_nzv_cor)`. These are: *`r sort(names(training_no_na_nzv_cor))`*.
 
-We can see that there are two time-stamp variables as well as a factor variable called *user_name*. Let's remove them since they are irrelevant.
+We can see that there are two time-stamp variables, a factor variable called *user_name*, a variable *X* which is simply the row number and finally *num_window*. Let's remove them since they are irrelevant.
 
 ```{r explor_timestamps}
-training_no_na_nzv_cor <- training_no_na_nzv_cor[, !(names(training_no_na_nzv_cor) %in% c('raw_timestamp_part_1', 'raw_timestamp_part_2', 'user_name'))]
+training_no_na_nzv_cor <- training_no_na_nzv_cor[, !(names(training_no_na_nzv_cor) %in% c('raw_timestamp_part_1', 'raw_timestamp_part_2', 'user_name', 'X', 'num_window'))]
 ```
 
 The final dataset before we start training has `r ncol(training_no_na_nzv_cor)` columns (including the response variables). These are *`r sort(names(training_no_na_nzv_cor))`*.
@@ -118,81 +118,91 @@ table(sapply(colnames(training_no_na_nzv_cor), FUN = function(n) class(training_
 # Prepare for training in parallel (works in Linux).
 library(doMC)
 registerDoMC(2)
+# Cleanup large variables that are not needed anymore.
+rm(training_orig, training_no_na, training_no_na_nzv)
 ```
 
-Because `classe` is a *factor* variable we will need to train a classifier and since it has more than two levels, we cannot use *Generalized Linear Models* (glm). Instead we have to use more advanced classifiers. More specifically *regression trees (CART)*, *random forest* and *stochastic gradient boosting*. All classifiers will be trained using *5-fold Cross Validation* to reduce model overfitting and to estimate the out of sample error during training. We expect this estimate to be close to the final out of sample error that we will calculate later on using the test dataset. Our metric will be *accuracy*.
+Because `classe` is a *factor* variable we will need to train a classifier and since it has more than two levels, we cannot use *Generalized Linear Models* (glm). Instead we have to use more advanced classifiers. More specifically *classification and regression trees (CART)*, *stochastic gradient boosting* and *random forest*. All classifiers will be trained using *5-fold Cross Validation* to reduce model overfitting and to estimate the out of sample error during training. We expect this estimate to be close to the final out of sample error that we will calculate later on using the test dataset. Our metric will be *accuracy*.
 
 ```{r train_control}
 trControl <- trainControl(method="cv", number=5)
 ```
 
-Let's train the classifiers:
+Let's train the classifiers, print a summary for each model and plot the most important features:
 
-### 1. Regression Trees (rpart)
+### 1. CART (rpart)
 
 ```{r training_rpart, cache=TRUE}
 m_no_na_nzv_cor_rpart <- train(classe ~ ., data = training_no_na_nzv_cor, method='rpart', trControl = trControl)
-print(m_no_na_nzv_cor_rpart)
+
+m_no_na_nzv_cor_rpart$results[1,]
 ```
 
-### 2. Random Forest (rf). 
+### 2. Boosting (gbm)
+
+For boosting, the maximum depth of interactions is set to 40, the number of trees to 150 with learning rate of 0.01.
+
+```{r training_gbm, cache=TRUE}
+gbmParam <-  expand.grid(interaction.depth = 40, n.trees = 150, shrinkage = .01, n.minobsinnode = 10)
+m_no_na_nzv_cor_gbm <- train(classe ~ ., data = training_no_na_nzv_cor, trControl = trControl, tuneGrid = gbmParam, method='gbm', distribution = 'multinomial', verbose=FALSE)
+
+m_no_na_nzv_cor_gbm$results
+```
+
+The estimated accuracy of this model is quite high. With more fine tuning it could probably get even higher.
+
+### 3. Random Forest (parRF). 
+
+For the training of the random forest classifier, `mtry` is set to 2 and `proximity` to TRUE.
 
 ```{r training_rf, cache=TRUE}
 rfParam <- expand.grid(mtry = 2)
 m_no_na_nzv_cor_rf <- train(classe ~ ., data = training_no_na_nzv_cor, method='parRF', prox=TRUE, tuneGrid = rfParam, trControl = trControl)
-print(m_no_na_nzv_cor_rf)
+
+m_no_na_nzv_cor_rf$results
 ```
 
-### 3. Stochastic Gradient Boosting (gbm)
+## Results
 
-```{r training_gbm, cache=TRUE}
-m_no_na_nzv_cor_gbm <- train(classe ~ ., data = training_no_na_nzv_cor, method='gbm', verbose=FALSE, trControl = trControl)
-print(m_no_na_nzv_cor_gbm)
-```
-
-Now let's compare all models using the resamples function:
+First let's compare all models using the resamples function:
 
 ```{r training_comparison, cache=TRUE}
 resamps <- resamples(list(RPART = m_no_na_nzv_cor_rpart, RF = m_no_na_nzv_cor_rf, GBM = m_no_na_nzv_cor_gbm))
 summary(resamps)
 ```
 
-We can see that the random forest and boosting methods are significantly more accurate than CART.
+We can see that the random forest is the most accurate model followed by boosting and CART. We can also use the testing dataset (taken from the original training set) to see how the three models perform compared to the actual values of the response variable *classe*:
 
-## Results
-
-Let's use the testing dataset (taken from the original training set) to see how the three models perform compared to the actual values of the response variable *classe*:
-
-### 1. Regression Trees (rpart)
+### 1. CART (rpart)
 ```{r results_rpart}
 pred_rpart <- predict(m_no_na_nzv_cor_rpart, testing)
 cm_rpart <- confusionMatrix(pred_rpart, testing$classe)
 cm_rpart
 ```
 
-We can see that the out of sample error measured by accuracy is `r cm_rpart$overall[1]`. During training, this was estimated to be `r m_no_na_nzv_cor_rpart$results$Accuracy[1]`. From the table it is obvious that classes 'C' and 'D' are all mistakenly predicted to be class 'E'.
+We can see that the out of sample error measured by accuracy is `r cm_rpart$overall[1]`. During training, this was estimated to be `r m_no_na_nzv_cor_rpart$results$Accuracy[1]`. This classifier does not perform well.
 
-### 2. Random Forest (rf)
-```{r results_rf}
-pred_rf <- predict(m_no_na_nzv_cor_rf, testing)
-cm_rf <- confusionMatrix(pred_rf, testing$classe)
-cm_rf
-```
-
-In this case accuracy is `r cm_rf$overall[1]`. During training, this was estimated to be `r m_no_na_nzv_cor_rf$results$Accuracy[1]`. From the table we see that almost all observations were correctly predicted. The only erros are in predictions for classes 'C' and 'C'. Overall this classifier performed really well.
-
-### 3. Stochastic Gradient Boosting (gbm)
+### 2. Boosting (gbm)
 ```{r results_gbm}
 pred_gbm <- predict(m_no_na_nzv_cor_gbm, testing)
 cm_gbm <- confusionMatrix(pred_gbm, testing$classe)
 cm_gbm
 ```
 
-The accuracy of this model against the testing data is `r cm_gbm$overall[1]`. During training, this was estimated to be `r m_no_na_nzv_cor_gbm$results$Accuracy[1]`. From the table we see that almost all observations were correctly predicted. The only missclassification was for class 'B'. Simillarly with the *random forest* classifier, boosting trained a classifier that performed exceptionally.
+The accuracy of this model against the testing data is `r cm_gbm$overall[1]`. During training, this was estimated to be `r m_no_na_nzv_cor_gbm$results$Accuracy[1]`.
 
-For the submission part of the project I chose to use the *random forest* classifier due to the slightly-slightly higher accuracy. Also for some reason both the *CART* and *boosting* classifiers classified all 20 observations as classe 'A'. The *random forest* classifier produced the correct results.
+### 3. Random Forest (rf)
+```{r results_rf}
+pred_rf <- predict(m_no_na_nzv_cor_rf, testing)
+cm_rf <- confusionMatrix(pred_rf, testing$classe)
+cm_rf
+```
 
-If it wasn't for this, we would have tried to combine (stack) these two classifiers to see if we can create an even more accurate one.
+In this case accuracy is `r cm_rf$overall[1]`. During training, this was estimated to be `r m_no_na_nzv_cor_rf$results$Accuracy[1]`. From the table we see that almost all observations were correctly predicted. There just a few misclassifications. Overall this classifier performed exceptionally well outperforming the other two classifiers.
+
+## Summary
+
+To summarize we used the *caret* R package to split the data into two datasets for training and testing. We then preprocessed the training dataset using several techniques (missing values, near zero values, linear correlations) and managed to reduce the number of variables from `r ncol(training)` to `r ncol(training_no_na_nzv_cor)`. Then we trained three different classifiers using the *CART*, *Random Forest* and *Boosting* methods. 5-fold Cross Validation was used to validate each model and avoid overfitting. From these three classifiers, the one based on *random forests* performed significantly better with accuracy close to 99% on the test dataset.
 
 ## References
 
@@ -200,17 +210,34 @@ The data for this project come from this [source](http://groupware.les.inf.puc-r
 
 Velloso, E.; Bulling, A.; Gellersen, H.; Ugulino, W.; Fuks, H. [Qualitative Activity Recognition of Weight Lifting Exercises](http://groupware.les.inf.puc-rio.br/work.jsf?p1=11201). Proceedings of 4th International Conference in Cooperation with SIGCHI (Augmented Human '13) . Stuttgart, Germany: ACM SIGCHI, 2013. 
 
-## Appendix
+## Appendix A: Training times
 
 To train in parallel the `doMC` package was used with 2 workers. The total time (in seconds) needed to train each method is:  
-1. Regression Trees: `r m_no_na_nzv_cor_rpart$times$everything[3]`  
-2. Random Forest: `r m_no_na_nzv_cor_rf$times$everything[3]`  
-3. Stochastic Gradient Boosting: `r m_no_na_nzv_cor_gbm$times$everything[3]`  
+1. CART: `r m_no_na_nzv_cor_rpart$times$everything[3]`  
+2. Boosting: `r m_no_na_nzv_cor_gbm$times$everything[3]`  
+3. Random Forest: `r m_no_na_nzv_cor_rf$times$everything[3]`  
 
-Session Info:  
-```{r echo=FALSE} 
-sessionInfo()
+## Appendix B: Selected features
+
+### 1. CART
+
+```{r selected_features_rpart}
+plot(varImp(m_no_na_nzv_cor_rpart), top = 10)
 ```
+
+### 2. Boosting
+
+```{r selected_features_gbm}
+plot(varImp(m_no_na_nzv_cor_gbm), top = 10)
+```
+
+### 3. Random Forest
+
+```{r selected_features_rf}
+plot(varImp(m_no_na_nzv_cor_rf), top = 10)
+```
+
+## Appendix C: Submission dataset
 
 For the project submission, the following code was used to create the separate files for each of the 20 test observations:
 ```{r submission}
@@ -222,6 +249,16 @@ pml_write_files = function(x){
     }
 }
 
-final_pred <- predict(m_no_na_nzv_cor_rf, testing_final)
-# pml_write_files(final_pred)
+final_pred_rpart <- predict(m_no_na_nzv_cor_rpart, testing_final)
+final_pred_gbm <- predict(m_no_na_nzv_cor_gbm, testing_final)
+final_pred_rf <- predict(m_no_na_nzv_cor_rf, testing_final)
+
+data.frame(RF = final_pred_rf, GBM = final_pred_gbm, CART = final_pred_rpart)
+```
+
+## Appendix D: Session Info
+
+Session Info:  
+```{r echo=FALSE} 
+sessionInfo()
 ```
